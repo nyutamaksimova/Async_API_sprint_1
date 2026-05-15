@@ -1,0 +1,83 @@
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fastapi_app
+
+    ports:
+      - "8000:8000"
+
+    env_file:
+      - .env
+
+    depends_on:
+      - elasticsearch
+      - redis
+
+    restart: always
+
+  etl:
+    build:
+      context: .
+      dockerfile: postgres_to_es/Dockerfile
+
+    container_name: etl_service
+
+    env_file:
+      - .env
+
+    depends_on:
+      - postgres
+      - elasticsearch
+
+    restart: always
+
+  postgres:
+    image: postgres:16
+
+    environment:
+      POSTGRES_DB: movies
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database_dump.sql:/docker-entrypoint-initdb.d/init.sql
+
+    restart: always
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+
+    ports:
+      - "9200:9200"
+
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+    restart: always
+
+  redis:
+    image: redis:7
+
+    container_name: redis
+
+    ports:
+      - "6379:6379"
+
+    restart: always
+
+volumes:
+  postgres_data:
+  es_data:
