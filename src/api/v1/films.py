@@ -1,51 +1,14 @@
 from http import HTTPStatus
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
 
+from src.api.v1.schemes import FilmShort, Film
+from src.core.messages import FILM_NOT_FOUND
 from src.services.film import FilmService, get_film_service
 
 router = APIRouter()
-
-
-class Genre(BaseModel):
-    """Жанр"""
-    uuid: str
-    name: str
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class Person(BaseModel):
-    """Персона"""
-    uuid: str
-    full_name: str
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class Film(BaseModel):
-    """Фильм"""
-    uuid: str
-    title: str
-    imdb_rating: float
-    description: str
-    genre: list[Genre]
-    actors: list[Person]
-    writers: list[Person]
-    directors: list[Person]
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class FilmShort(BaseModel):
-    """Краткий формат информации о фильме"""
-    uuid: str
-    title: str
-    imdb_rating: float
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get(
@@ -57,8 +20,8 @@ class FilmShort(BaseModel):
 )
 async def films_list(
         sort: str = Query(default='-imdb_rating'),
-        page_size: int = Query(default=50, ge=1, le=100),
-        page_number: int = Query(default=1, ge=1),
+        page_size: Annotated[int, Query(description='Количество элементов на странице', ge=1, le=100)] = 50,
+        page_number: Annotated[int, Query(description='Номер страницы', ge=1)] = 1,
         film_service: FilmService = Depends(get_film_service),
 ):
     """Общий список фильмов"""
@@ -75,13 +38,13 @@ async def films_list(
     '/search',
     response_model=list[FilmShort],
     summary='Поиск фильмов',
-    description='Поиск похожих по жанрам фильмов',
-    response_description='Список похожих фильмов'
+    description='Поиск фильмов по ключевым словам',
+    response_description='Список подходящих фильмов'
 )
 async def film_search(
         query: str = Query(..., min_length=1),
-        page_size: int = Query(default=50, ge=1, le=100),
-        page_number: int = Query(default=1, ge=1),
+        page_size: Annotated[int, Query(description='Количество элементов на странице', ge=1, le=100)] = 50,
+        page_number: Annotated[int, Query(description='Номер страницы', ge=1)] = 1,
         film_service: FilmService = Depends(get_film_service),
 ) -> list[FilmShort]:
     """Поиск по фильмам"""
@@ -92,14 +55,16 @@ async def film_search(
     )
 
 
-@router.get('/{film_id:uuid}', response_model=Film, summary="Информация о фильме",
+@router.get('/{film_id:uuid}',
+            response_model=Film,
+            summary="Информация о фильме",
             description="Вывод информации о конкретном фильме",
             response_description="Информация о фильме")
 async def film_details(film_id: UUID, film_service: FilmService = Depends(get_film_service)) -> Film:
     """Информация об одном фильме"""
     film = await film_service.get_by_id(film_id)
     if not film:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Film not found')
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=FILM_NOT_FOUND)
 
     return Film.model_validate(film)
 
@@ -108,16 +73,21 @@ async def film_details(film_id: UUID, film_service: FilmService = Depends(get_fi
     '/{film_id:uuid}/similar',
     response_model=list[FilmShort],
     summary='Похожие фильмы',
+    description='Поиск фильмов того же жанра',
+    response_description='Список похожих фильмов'
 )
 async def similar_films(
         film_id: UUID,
-        page_size: int = Query(default=50, ge=1, le=100),
-        page_number: int = Query(default=1, ge=1),
+        page_size: Annotated[int, Query(description='Количество элементов на странице', ge=1, le=100)] = 50,
+        page_number: Annotated[int, Query(description='Номер страницы', ge=1)] = 1,
         film_service: FilmService = Depends(get_film_service),
 ):
     """Похожие по жанру"""
-    return await film_service.get_similar(
+    films = await film_service.get_similar(
         film_id=film_id,
         page_size=page_size,
         page_number=page_number,
     )
+    if not films:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=FILM_NOT_FOUND)
+    return films

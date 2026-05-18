@@ -1,12 +1,14 @@
 import json
 from functools import lru_cache
-from typing import Optional
+from http import HTTPStatus
 from uuid import UUID
 
 from elasticsearch import AsyncElasticsearch, NotFoundError
 from fastapi import Depends
+from fastapi import HTTPException
 from redis.asyncio import Redis
 
+from src.core.messages import INVALID_SORT_FIELD
 from src.db.elastic import get_elastic
 from src.db.redis import get_redis
 from src.models.film import Film
@@ -22,7 +24,7 @@ class FilmService:
         self.elastic = elastic
 
     # Функции для кеширования
-    async def _get_cache(self, key: str) -> Optional[list[Film]]:
+    async def _get_cache(self, key: str) -> list[Film] | None:
         data = await self.redis.get(key)
         if not data:
             return None
@@ -36,7 +38,7 @@ class FilmService:
         )
 
     # Получение фильма по id
-    async def get_by_id(self, film_id: UUID) -> Optional[Film]:
+    async def get_by_id(self, film_id: UUID) -> Film | None:
         film = await self._film_from_cache(film_id)
         if not film:
             film = await self._get_film_from_elastic(film_id)
@@ -45,14 +47,14 @@ class FilmService:
             await self._put_film_to_cache(film)
         return film
 
-    async def _get_film_from_elastic(self, film_id: UUID) -> Optional[Film]:
+    async def _get_film_from_elastic(self, film_id: UUID) -> Film | None:
         try:
             doc = await self.elastic.get(index='movies', id=str(film_id))
         except NotFoundError:
             return None
         return Film.model_validate(doc['_source'])
 
-    async def _film_from_cache(self, film_id: UUID) -> Optional[Film]:
+    async def _film_from_cache(self, film_id: UUID) -> Film | None:
         data = await self.redis.get(str(film_id))
         if not data:
             return None
@@ -66,6 +68,7 @@ class FilmService:
         )
 
     # Получение списка фильмов
+
     async def get_list(self, sort: str, page_size: int, page_number: int) -> list[Film]:
         cache_key = f"films:list:{sort}:{page_size}:{page_number}"
 
@@ -74,6 +77,15 @@ class FilmService:
             return cached
 
         sort_field = sort.removeprefix('-')
+        ALLOWED_SORT_FIELDS = {
+            'imdb_rating',
+        }
+        if sort_field not in ALLOWED_SORT_FIELDS:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail=INVALID_SORT_FIELD,
+            )
+
         sort_order = 'desc' if sort.startswith('-') else 'asc'
 
         response = await self.elastic.search(
@@ -96,25 +108,24 @@ class FilmService:
         if cached:
             return cached
 
-        body = {
-            "query": {
-                "multi_match": {
-                    "query": query,
-                    "fields": [
-                        "title^3",
-                        "description",
-                        "actors_names",
-                        "writers_names",
-                        "directors_names",
-                    ],
-                    "fuzziness": "auto"
-                }
-            },
-            "from": (page_number - 1) * page_size,
-            "size": page_size,
+        query = {
+            "multi_match": {
+                "query": query,
+                "fields": [
+                    "title^3",
+                    "description",
+                    "actors_names",
+                    "writers_names",
+                    "directors_names",
+                ],
+                "fuzziness": "auto"
+            }
         }
 
-        response = await self.elastic.search(index="movies", body=body)
+        response = await self.elastic.search(index="movies",
+                                             query=query,
+                                             from_=(page_number - 1) * page_size,
+                                             size=page_size)
 
         films = [Film.model_validate(hit["_source"]) for hit in response["hits"]["hits"]]
 
@@ -122,7 +133,7 @@ class FilmService:
         return films
 
     # Поиск похожих по жанру
-    async def get_similar(self, film_id: UUID, page_size: int, page_number: int) -> list[Film]:
+    async def get_similar(self, film_id: UUID, page_size: int, page_number: int) -> list[Film] | None:
         cache_key = f"films:similar:{film_id}:{page_size}:{page_number}"
 
         cached = await self._get_cache(cache_key)
@@ -131,36 +142,34 @@ class FilmService:
 
         film = await self._get_film_from_elastic(film_id)
         if not film:
-            return []
+            return None
 
         genre_ids = [g.uuid for g in film.genre]
-
-        body = {
-            "query": {
-                "bool": {
-                    "must": [
-                        {
-                            "nested": {
-                                "path": "genre",
-                                "query": {
-                                    "terms": {
-                                        "genre.uuid": genre_ids
-                                    }
+        query = {
+            "bool": {
+                "must": [
+                    {
+                        "nested": {
+                            "path": "genre",
+                            "query": {
+                                "terms": {
+                                    "genre.uuid": genre_ids
                                 }
                             }
                         }
-                    ],
-                    "must_not": [
-                        {"term": {"uuid": str(film_id)}}
-                    ]
-                }
-            },
-            "from": (page_number - 1) * page_size,
-            "size": page_size,
-            "sort": [{"imdb_rating": {"order": "desc"}}]
+                    }
+                ],
+                "must_not": [
+                    {"term": {"uuid": str(film_id)}}
+                ]
+            }
         }
 
-        response = await self.elastic.search(index="movies", body=body)
+        response = await self.elastic.search(index="movies",
+                                             query=query,
+                                             from_=(page_number - 1) * page_size,
+                                             size=page_size,
+                                             sort=[{"imdb_rating": {"order": "desc"}}])
 
         films = [Film.model_validate(hit["_source"]) for hit in response["hits"]["hits"]]
 

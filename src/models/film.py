@@ -13,5 +13,3 @@ class Film(BaseModel):
     actors: list[Person]
     writers: list[Person]
     directors: list[Person]
-
-    model_config = ConfigDict(from_attributes=True)

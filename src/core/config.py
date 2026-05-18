@@ -1,22 +1,16 @@
-import os
-from logging import config as logging_config
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dotenv import load_dotenv
 
-from src.core.logger import LOGGING
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='allow')
 
-load_dotenv()
+    project_name: str = 'Онлайн-кинотеатр'
+    redis_host: str = 'localhost'
+    redis_port: int = 6379
+    elastic_host: str = 'elasticsearch'
+    elastic_port: int = 9200
 
-logging_config.dictConfig(LOGGING)
+    log_level: str = 'INFO'
 
-PROJECT_NAME = os.getenv('PROJECT_NAME', 'Онлайн-кинотеатр')
 
-REDIS_HOST = os.getenv('REDIS_HOST')
-REDIS_PORT = int(os.getenv('REDIS_PORT'))
-
-ELASTIC_HOST = os.getenv('ELASTIC_HOST', 'elasticsearch')
-ELASTIC_PORT = int(os.getenv('ELASTIC_PORT', 9200))
-
-ELASTIC_SCHEMA = os.getenv('ELASTIC_SCHEMA', 'http://')
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+settings = Settings()
